@@ -107,6 +107,109 @@ function SlabPanel({
   );
 }
 
+
+
+// ---------- kitchen size form ----------
+
+type KitchenSize = {
+  lengthCm: number;
+  depthCm: number;
+  counterHeightCm: number;
+  wallHeightCm: number;
+};
+
+const DEFAULT_SIZE: KitchenSize = {
+  lengthCm: 300,
+  depthCm: 60,
+  counterHeightCm: 90,
+  wallHeightCm: 60,
+};
+
+const SIZE_FIELDS: { key: keyof KitchenSize; label: string; min: number; max: number }[] = [
+  { key: "lengthCm", label: "Length", min: 50, max: 800 },
+  { key: "depthCm", label: "Depth", min: 40, max: 120 },
+  { key: "counterHeightCm", label: "Counter height", min: 70, max: 110 },
+  { key: "wallHeightCm", label: "Wall cladding height", min: 0, max: 150 },
+];
+
+// A number box that lets you type freely (e.g. clear it and type "350"),
+// but only passes valid values on to the kitchen.
+function NumberField({ value, min, max, onChange }: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const number = Number(e.target.value);
+        if (e.target.value !== "" && number >= min && number <= max) onChange(number);
+      }}
+      onBlur={() => setDraft(String(value))} // leaving the box restores the last valid value
+      style={{ width: 64, marginRight: 4 }}
+    />
+  );
+}
+
+function KitchenForm({ size, onChange }: {
+  size: KitchenSize;
+  onChange: (size: KitchenSize) => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 16,
+        right: 16,
+        zIndex: 1,
+        width: 260,
+        padding: 16,
+        background: "white",
+        borderRadius: 8,
+        fontFamily: "sans-serif",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+      }}
+    >
+      <h3 style={{ margin: "0 0 12px" }}>Kitchen</h3>
+      {SIZE_FIELDS.map((field) => (
+        <label
+          key={field.key}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 8,
+            fontSize: 14,
+          }}
+        >
+          {field.label}
+          <span>
+            <NumberField
+              value={size[field.key]}
+              min={field.min}
+              max={field.max}
+              onChange={(value) => onChange({ ...size, [field.key]: value })}
+            />
+            cm
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
 // ---------- 3D kitchen ----------
 
 const PLAIN_STONE = "#f2efe9";
@@ -155,14 +258,13 @@ function StonePiece({ slab, size, position, faceWidthM, faceHeightM }: {
   );
 }
 
-function Kitchen({ slab }: { slab: Slab | undefined }) {
+function Kitchen({ slab, size }: { slab: Slab | undefined; size: KitchenSize }) {
   // all sizes in meters
-  const length = 4;
-  const depth = 0.6;
+  const length = size.lengthCm / 100;
+  const depth = size.depthCm / 100;
   const thickness = slab ? slab.thickness_mm / 1000 : 0.02;
-  const counterHeight = 0.9;
-  const wallHeight = 0.6;
-
+  const counterHeight = size.counterHeightCm / 100;
+  const wallHeight = size.wallHeightCm / 100;
   return (
     <group>
       {/* cabinets */}
@@ -180,14 +282,16 @@ function Kitchen({ slab }: { slab: Slab | undefined }) {
         faceHeightM={depth}
       />
 
-      {/* back wall cladding: its front face is length × wallHeight */}
-      <StonePiece
-        slab={slab}
-        size={[length, wallHeight, thickness]}
-        position={[0, counterHeight + thickness + wallHeight / 2, -depth / 2]}
-        faceWidthM={length}
-        faceHeightM={wallHeight}
-      />
+            {/* back wall cladding: its front face is length × wallHeight */}
+      {wallHeight > 0 && (
+        <StonePiece
+          slab={slab}
+          size={[length, wallHeight, thickness]}
+          position={[0, counterHeight + thickness + wallHeight / 2, -depth / 2]}
+          faceWidthM={length}
+          faceHeightM={wallHeight}
+        />
+      )}
     </group>
   );
 }
@@ -198,6 +302,7 @@ export default function App() {
   const [slabs, setSlabs] = useState<Slab[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [kitchenSize, setKitchenSize] = useState<KitchenSize>(DEFAULT_SIZE);
 
   const loadSlabs = () =>
     fetch(`${API}/slabs`)
@@ -237,10 +342,11 @@ export default function App() {
         onSelect={setSelectedId}
         onUpload={uploadPhoto}
       />
+      <KitchenForm size={kitchenSize} onChange={setKitchenSize} />
       <Canvas camera={{ position: [3, 2.2, 3.5], fov: 45 }}>
         <ambientLight intensity={0.7} />
         <directionalLight position={[4, 6, 3]} intensity={1.2} />
-        <Kitchen slab={selected} />
+        <Kitchen slab={selected} size={kitchenSize} />
         <OrbitControls target={[0, 0.9, 0]} />
       </Canvas>
     </div>
