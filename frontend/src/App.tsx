@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, useTexture } from "@react-three/drei";
+import * as THREE from "three";
 
 const API = "http://localhost:8000";
 
@@ -14,17 +15,23 @@ type Slab = {
   image_path: string | null;
 };
 
-function SlabList() {
-  const [slabs, setSlabs] = useState<Slab[]>([]);
-  const [error, setError] = useState("");
+const imageUrl = (slab: Slab) => `${API}/images/${slab.image_path}`;
 
-  useEffect(() => {
-    fetch(`${API}/slabs`)
-      .then((res) => res.json())
-      .then(setSlabs)
-      .catch(() => setError("Cannot reach the backend"));
-  }, []);
+// ---------- side panel ----------
 
+function SlabPanel({
+  slabs,
+  selectedId,
+  error,
+  onSelect,
+  onUpload,
+}: {
+  slabs: Slab[];
+  selectedId: number | null;
+  error: string;
+  onSelect: (id: number) => void;
+  onUpload: (id: number, file: File) => void;
+}) {
   return (
     <div
       style={{
@@ -32,7 +39,9 @@ function SlabList() {
         top: 16,
         left: 16,
         zIndex: 1,
-        width: 260,
+        width: 300,
+        maxHeight: "calc(100vh - 32px)",
+        overflowY: "auto",
         padding: 16,
         background: "white",
         borderRadius: 8,
@@ -43,11 +52,54 @@ function SlabList() {
       <h3 style={{ margin: "0 0 12px" }}>Slabs</h3>
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {!error && slabs.length === 0 && <p>No slabs yet</p>}
+
       {slabs.map((slab) => (
-        <div key={slab.id} style={{ marginBottom: 10 }}>
-          <strong>{slab.name}</strong>
-          <div style={{ fontSize: 13, color: "#555" }}>
-            {slab.type} · {slab.width_mm} × {slab.height_mm} × {slab.thickness_mm} mm
+        <div
+          key={slab.id}
+          onClick={() => onSelect(slab.id)}
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            padding: 8,
+            marginBottom: 6,
+            borderRadius: 6,
+            cursor: "pointer",
+            border: slab.id === selectedId ? "2px solid #2563eb" : "2px solid transparent",
+            background: slab.id === selectedId ? "#eff6ff" : "transparent",
+          }}
+        >
+          {slab.image_path ? (
+            <img
+              src={imageUrl(slab)}
+              alt=""
+              style={{ width: 56, height: 28, objectFit: "cover", borderRadius: 3 }}
+            />
+          ) : (
+            <div style={{ width: 56, height: 28, background: "#e5e7eb", borderRadius: 3 }} />
+          )}
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <strong style={{ fontSize: 14 }}>{slab.name}</strong>
+            <div style={{ fontSize: 12, color: "#555" }}>
+              {slab.type} · {slab.width_mm} × {slab.height_mm} × {slab.thickness_mm} mm
+            </div>
+            <label
+              onClick={(e) => e.stopPropagation()}
+              style={{ fontSize: 12, color: "#2563eb", cursor: "pointer" }}
+            >
+              {slab.image_path ? "Replace photo" : "Upload photo"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onUpload(slab.id, file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
           </div>
         </div>
       ))}
@@ -55,11 +107,59 @@ function SlabList() {
   );
 }
 
-function Kitchen() {
+// ---------- 3D kitchen ----------
+
+const PLAIN_STONE = "#f2efe9";
+
+// Puts the slab photo on a surface at real scale:
+// a face that is 600 mm deep shows only 600 mm of the slab, not the whole slab squeezed in.
+function StoneMaterial({ slab, faceWidthM, faceHeightM }: {
+  slab: Slab;
+  faceWidthM: number;
+  faceHeightM: number;
+}) {
+  const base = useTexture(imageUrl(slab));
+
+  const map = useMemo(() => {
+    const t = base.clone();
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set((faceWidthM * 1000) / slab.width_mm, (faceHeightM * 1000) / slab.height_mm);
+    t.needsUpdate = true;
+    return t;
+  }, [base, faceWidthM, faceHeightM, slab.width_mm, slab.height_mm]);
+
+  return <meshStandardMaterial map={map} roughness={0.3} />;
+}
+
+function StonePiece({ slab, size, position, faceWidthM, faceHeightM }: {
+  slab: Slab | undefined;
+  size: [number, number, number];
+  position: [number, number, number];
+  faceWidthM: number;
+  faceHeightM: number;
+}) {
+  const plain = <meshStandardMaterial color={PLAIN_STONE} />;
+  return (
+    <mesh position={position}>
+      <boxGeometry args={size} />
+      {slab?.image_path ? (
+        <Suspense fallback={plain}>
+          <StoneMaterial slab={slab} faceWidthM={faceWidthM} faceHeightM={faceHeightM} />
+        </Suspense>
+      ) : (
+        plain
+      )}
+    </mesh>
+  );
+}
+
+function Kitchen({ slab }: { slab: Slab | undefined }) {
   // all sizes in meters
   const length = 4;
   const depth = 0.6;
-  const thickness = 0.02;
+  const thickness = slab ? slab.thickness_mm / 1000 : 0.02;
   const counterHeight = 0.9;
   const wallHeight = 0.6;
 
@@ -71,29 +171,76 @@ function Kitchen() {
         <meshStandardMaterial color="#8a8f98" />
       </mesh>
 
-      {/* countertop */}
-      <mesh position={[0, counterHeight + thickness / 2, 0]}>
-        <boxGeometry args={[length, thickness, depth]} />
-        <meshStandardMaterial color="#f2efe9" />
-      </mesh>
+      {/* countertop: its top face is length × depth */}
+      <StonePiece
+        slab={slab}
+        size={[length, thickness, depth]}
+        position={[0, counterHeight + thickness / 2, 0]}
+        faceWidthM={length}
+        faceHeightM={depth}
+      />
 
-      {/* back wall cladding */}
-      <mesh position={[0, counterHeight + thickness + wallHeight / 2, -depth / 2]}>
-        <boxGeometry args={[length, wallHeight, thickness]} />
-        <meshStandardMaterial color="#f2efe9" />
-      </mesh>
+      {/* back wall cladding: its front face is length × wallHeight */}
+      <StonePiece
+        slab={slab}
+        size={[length, wallHeight, thickness]}
+        position={[0, counterHeight + thickness + wallHeight / 2, -depth / 2]}
+        faceWidthM={length}
+        faceHeightM={wallHeight}
+      />
     </group>
   );
 }
 
+// ---------- page ----------
+
 export default function App() {
+  const [slabs, setSlabs] = useState<Slab[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [error, setError] = useState("");
+
+  const loadSlabs = () =>
+    fetch(`${API}/slabs`)
+      .then((res) => res.json())
+      .then((data: Slab[]) => {
+        setSlabs(data);
+        setError("");
+        // select the first slab with a photo, if nothing is selected yet
+        setSelectedId((current) => current ?? data.find((s) => s.image_path)?.id ?? null);
+      })
+      .catch(() => setError("Cannot reach the backend"));
+
+  useEffect(() => {
+    loadSlabs();
+  }, []);
+
+  const uploadPhoto = async (id: number, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API}/slabs/${id}/image`, { method: "POST", body: form });
+    if (!res.ok) {
+      setError("Upload failed");
+      return;
+    }
+    await loadSlabs();
+    setSelectedId(id);
+  };
+
+  const selected = slabs.find((s) => s.id === selectedId);
+
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
-      <SlabList />
+      <SlabPanel
+        slabs={slabs}
+        selectedId={selectedId}
+        error={error}
+        onSelect={setSelectedId}
+        onUpload={uploadPhoto}
+      />
       <Canvas camera={{ position: [3, 2.2, 3.5], fov: 45 }}>
         <ambientLight intensity={0.7} />
         <directionalLight position={[4, 6, 3]} intensity={1.2} />
-        <Kitchen />
+        <Kitchen slab={selected} />
         <OrbitControls target={[0, 0.9, 0]} />
       </Canvas>
     </div>
