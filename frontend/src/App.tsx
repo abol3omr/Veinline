@@ -1,4 +1,5 @@
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Component, Suspense, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, useTexture } from "@react-three/drei";
 import * as THREE from "three";
@@ -72,6 +73,7 @@ function SlabPanel({
           {slab.image_path ? (
             <img
               src={imageUrl(slab)}
+              crossOrigin="anonymous" // load it the same way the 3D texture does, so the browser cache works for both
               alt=""
               style={{ width: 56, height: 28, objectFit: "cover", borderRadius: 3 }}
             />
@@ -236,6 +238,23 @@ function StoneMaterial({ slab, faceWidthM, faceHeightM }: {
   return <meshStandardMaterial map={map} roughness={0.3} />;
 }
 
+// If a slab photo fails to load (deleted file, broken link), show the fallback
+// instead of letting the error blank out the whole 3D view.
+class PhotoErrorBoundary extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
 function StonePiece({ slab, size, position, faceWidthM, faceHeightM }: {
   slab: Slab | undefined;
   size: [number, number, number];
@@ -248,9 +267,11 @@ function StonePiece({ slab, size, position, faceWidthM, faceHeightM }: {
     <mesh position={position}>
       <boxGeometry args={size} />
       {slab?.image_path ? (
-        <Suspense fallback={plain}>
-          <StoneMaterial slab={slab} faceWidthM={faceWidthM} faceHeightM={faceHeightM} />
-        </Suspense>
+        <PhotoErrorBoundary key={slab.image_path} fallback={plain}>
+          <Suspense fallback={plain}>
+            <StoneMaterial slab={slab} faceWidthM={faceWidthM} faceHeightM={faceHeightM} />
+          </Suspense>
+        </PhotoErrorBoundary>
       ) : (
         plain
       )}
